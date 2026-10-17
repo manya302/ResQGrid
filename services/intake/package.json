@@ -1,0 +1,16 @@
+{
+  "name": "resqgrid-intake",
+  "version": "1.0.0",
+  "description": "ResQGrid intake service: receives emergency requests",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=../../.env src/index.js"
+  },
+  "engines": {
+    "node": ">=22.9"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "mysql2": "^3.11.0"
+  }
+}
