@@ -38,8 +38,10 @@
   </tr></thead><tbody></tbody></table>
 
   <script>
-    // Where the allocation service lives. This changes in later steps.
-    const ALLOCATION_URL = 'http://localhost:3001';
+    // Use the same host the page was loaded from. The cloud intake page is served on port 30000,
+    // so allocation is on 30001 there. Everywhere else it stays on 3001 as before.
+    const ALLOCATION_PORT = location.port === '30000' ? 30001 : 3001;
+    const ALLOCATION_URL = `${location.protocol}//${location.hostname}:${ALLOCATION_PORT}`;
     const REFRESH_MS = 3000;
 
     async function getJson(url) {
