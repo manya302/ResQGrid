@@ -1,0 +1,80 @@
+name: pipeline
+
+# When it runs: on every push to main and on every pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The least access the workflow needs: read the code, write packages (images) to ghcr.io.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest   # an x86 Linux machine, so images are linux/amd64
+    strategy:
+      fail-fast: false       # if one service fails, the other still finishes so you see both results
+      matrix:
+        service: [intake, allocation]   # the same steps run once per service
+
+    steps:
+      # Download your repository onto the runner.
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # ghcr.io only accepts lowercase names. This builds the name safely.
+      - name: Compute image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/resqgrid-${{ matrix.service }}" >> "$GITHUB_ENV"
+
+      # Sets up buildx, Docker's modern build tool.
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      # STAGE A: build only. load: true keeps the image on this machine so Trivy can scan it.
+      # push: false means nothing leaves the runner yet. pull: true fetches the freshest base image.
+      - name: Build image (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          pull: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          # Links the image to your repo so GITHUB_TOKEN is allowed to push it.
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # STAGE B: security scan. exit-code 1 makes the step fail when HIGH or CRITICAL issues are found.
+      # ignore-unfixed skips problems that have no patch available yet.
+      # The action is pinned to a full commit SHA (this is release v0.35.0), not a movable tag.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # STAGE C: only on a push to main. By default a step is skipped when any earlier
+      # step failed, so a failed scan above means nothing below ever runs.
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # built in, no secret to create
+
+      # Pushes the exact image that was just scanned, under two tags.
+      - name: Push image (SHA tag and latest)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
